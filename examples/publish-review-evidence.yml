@@ -1,0 +1,31 @@
+name: Publish Review Evidence
+run-name: Publish review evidence ${{ inputs.bundle_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: SHA-256 identity printed by review-evidence
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: review-evidence-${{ inputs.bundle_id }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: nick-cobra/review-evidence-publisher@v0.1.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          bundle_id: ${{ inputs.bundle_id }}
+          config: review-evidence.config.json
+          retention-days: "90"

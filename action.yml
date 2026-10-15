@@ -1,0 +1,56 @@
+name: Publish Review Evidence
+description: Validate a transfer bundle and publish an immutable GitHub Actions artifact.
+inputs:
+  bundle_id:
+    description: SHA-256 identity printed by review-evidence.
+    required: true
+  config:
+    description: Trusted JSON configuration from the protected-branch checkout.
+    default: review-evidence.config.json
+  retention-days:
+    description: Requested GitHub artifact retention, subject to repository settings.
+    default: "90"
+outputs:
+  artifact-id:
+    description: Immutable GitHub artifact ID.
+    value: ${{ steps.upload.outputs.artifact-id }}
+  artifact-url:
+    description: Authenticated artifact download page.
+    value: ${{ steps.upload.outputs.artifact-url }}
+  artifact-digest:
+    description: SHA-256 of the uploaded archive.
+    value: ${{ steps.upload.outputs.artifact-digest }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: "22"
+    - name: Validate and snapshot the transfer
+      id: prepare
+      shell: bash
+      env:
+        EVIDENCE_ACTION_ROOT: ${{ github.action_path }}
+        EVIDENCE_CONFIG: ${{ inputs.config }}
+        EVIDENCE_BUNDLE: ${{ inputs.bundle_id }}
+      run: |
+        set -euo pipefail
+        capture_path=$(node "$EVIDENCE_ACTION_ROOT/bin/review-evidence.mjs" --config "$EVIDENCE_CONFIG" --prepare "$EVIDENCE_BUNDLE")
+        echo "capture_path=$capture_path" >> "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@v7
+      id: upload
+      with:
+        name: review-evidence-${{ inputs.bundle_id }}
+        path: ${{ steps.prepare.outputs.capture_path }}/
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+        compression-level: 0
+        overwrite: false
+    - name: Remove this run's snapshot
+      if: always() && steps.prepare.outputs.capture_path != ''
+      shell: bash
+      env:
+        EVIDENCE_ACTION_ROOT: ${{ github.action_path }}
+        EVIDENCE_CONFIG: ${{ inputs.config }}
+        EVIDENCE_CAPTURE_PATH: ${{ steps.prepare.outputs.capture_path }}
+      run: node "$EVIDENCE_ACTION_ROOT/bin/review-evidence.mjs" --config "$EVIDENCE_CONFIG" --cleanup "$EVIDENCE_CAPTURE_PATH"

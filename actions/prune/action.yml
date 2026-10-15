@@ -1,0 +1,30 @@
+name: Prune Review Evidence
+description: Preview or remove verified expired-grace artifacts and abandoned transfers.
+inputs:
+  config:
+    description: Trusted JSON configuration from the protected-branch checkout.
+    default: review-evidence.config.json
+  apply:
+    description: Set exactly true to delete eligible items; false previews them.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: "22"
+    - name: Inspect or remove eligible evidence
+      shell: bash
+      env:
+        EVIDENCE_ACTION_ROOT: ${{ github.action_path }}
+        EVIDENCE_CONFIG: ${{ inputs.config }}
+        EVIDENCE_APPLY: ${{ inputs.apply }}
+      run: |
+        set -euo pipefail
+        args=(--config "$EVIDENCE_CONFIG" --prune)
+        case "$EVIDENCE_APPLY" in
+          true) args+=(--apply) ;;
+          false) ;;
+          *) echo "apply must be true or false" >&2; exit 1 ;;
+        esac
+        node "$EVIDENCE_ACTION_ROOT/../../bin/review-evidence.mjs" "${args[@]}"

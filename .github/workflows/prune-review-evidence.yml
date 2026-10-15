@@ -1,0 +1,28 @@
+name: Prune Review Evidence
+on:
+  schedule:
+    - cron: "0 19 * * 0"
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+  pull-requests: read
+concurrency:
+  group: prune-review-evidence
+  cancel-in-progress: false
+jobs:
+  prune:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./actions/prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          config: review-evidence.config.json
+          apply: "true"
