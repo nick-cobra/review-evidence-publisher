@@ -429,6 +429,37 @@ test("retention verifies archive bytes before deleting even a successful publish
   assert.deepEqual(fixture.deleted, []);
 });
 
+test("retention requires explicit unexpired metadata at the final artifact reread", (t) => {
+  for (const conclusion of ["success", "failure", "cancelled"]) {
+    for (const expired of [undefined, null, 0, true, "false"]) {
+      const { settings, artifact, run, deleted } = retentionFixture(t);
+      run.conclusion = conclusion;
+      let reads = 0;
+      const finalArtifact = { ...artifact };
+      if (expired === undefined) delete finalArtifact.expired;
+      else finalArtifact.expired = expired;
+      assert.throws(
+        () =>
+          pruneEvidenceArtifacts({
+            ...settings,
+            ghJson: (args) => {
+              if (args.at(-1).endsWith("/artifacts/456") && ++reads === 2) return finalArtifact;
+              return settings.ghJson(args);
+            },
+          }),
+        /identity changed/,
+        `${conclusion}: final expired=${String(expired)} must refuse deletion`,
+      );
+      assert.equal(reads, 2);
+      assert.deepEqual(deleted, []);
+    }
+    const valid = retentionFixture(t);
+    valid.run.conclusion = conclusion;
+    assert.deepEqual(pruneEvidenceArtifacts(valid.settings), [{ id: 456, applied: true }]);
+    assert.equal(valid.deleted.length, 1);
+  }
+});
+
 test("retention refuses changed identity, unknown source and incomplete or unbounded listings", (t) => {
   const { settings, artifact, deleted } = retentionFixture(t);
   let reads = 0;
