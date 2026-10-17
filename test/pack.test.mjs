@@ -33,6 +33,7 @@ test("packed zero-dependency runtime installs offline and runs in an independent
   for (const path of [
     "index.mjs",
     "bin/review-evidence.mjs",
+    "bin/runtime.mjs",
     "lib/config.mjs",
     "lib/artifacts.mjs",
     "lib/publication.mjs",
@@ -93,6 +94,16 @@ test("packed zero-dependency runtime installs offline and runs in an independent
   });
   assert.equal(linked.status, 0, linked.stderr);
   assert.match(linked.stdout, /Usage/);
+  const runtimeCli = spawnSync(
+    join(consumer, "node_modules/.bin/review-evidence-runtime"),
+    ["--help"],
+    {
+      cwd: consumer,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(runtimeCli.status, 0, runtimeCli.stderr);
+  assert.match(runtimeCli.stdout, /Runtime distribution/);
   const bin = join(installed, "bin/review-evidence.mjs");
   const f = runnerFixture(t, { branch: "trunk", workflow: ".github/workflows/captures.yaml" }, bin);
   const prepared = f.execute(["--prepare", f.manifest.bundleId]);

@@ -1,6 +1,6 @@
 {
   "name": "review-evidence-publisher",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Publish and verify review captures for a source commit using GitHub Actions artifacts.",
   "type": "module",
   "main": "./index.mjs",
@@ -9,7 +9,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "review-evidence": "./bin/review-evidence.mjs"
+    "review-evidence": "./bin/review-evidence.mjs",
+    "review-evidence-runtime": "./bin/runtime.mjs"
   },
   "engines": {
     "node": ">=22"

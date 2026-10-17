@@ -22,7 +22,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: nick-cobra/review-evidence-publisher@v0.1.1
+      - uses: nick-cobra/review-evidence-publisher@v0.1.2
         env:
           GH_TOKEN: ${{ github.token }}
         with:
