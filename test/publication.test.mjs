@@ -76,7 +76,7 @@ test("explicit discard retires an owned interrupted bundle without trusting part
   }
 });
 
-for (const config of [
+for (const [config, scenario] of [
   { repository: "acme/widget" },
   {
     repository: "example/independent-app",
@@ -86,8 +86,10 @@ for (const config of [
     transferTag: "capture-transfer",
     transferMarker: "<!-- custom-capture-transfer:v1 -->",
   },
-])
-  test(`publication and uncertain-dispatch recovery in ${config.repository}`, async (t) => {
+].flatMap((config) =>
+  ["uncertain-dispatch", "transient-read", "exhausted-read"].map((scenario) => [config, scenario]),
+))
+  test(`publication and ${scenario} recovery in ${config.repository}`, async (t) => {
     const {
       publishEvidence,
       prepareEvidenceUpload,
@@ -95,6 +97,7 @@ for (const config of [
       clearEvidenceArchiveCache,
       EVIDENCE_PREFIX,
       sha256,
+      githubJson,
     } = createEvidencePublisher(config);
     const repository = config.repository;
     const branch = config.branch ?? "main";
@@ -205,7 +208,7 @@ for (const config of [
           digest: `sha256:${sha256(archive)}`,
         };
       };
-      const ghJson = (args) => {
+      const transportJson = (args) => {
         const endpoint = args.at(-1);
         assert.ok(
           endpoint.startsWith(`repos/${repository}`),
@@ -235,6 +238,25 @@ for (const config of [
         if (endpoint.endsWith("/runs/123")) return run;
         throw new Error(`unexpected GH boundary: ${endpoint}`);
       };
+      let transientFailures = 0;
+      const waits = [];
+      const ghJson =
+        scenario === "uncertain-dispatch"
+          ? transportJson
+          : (args) =>
+              githubJson(args, {
+                exec: () => {
+                  if (
+                    args.at(-1).includes("/workflows/") &&
+                    transientFailures < (scenario === "exhausted-read" ? 3 : 1)
+                  ) {
+                    transientFailures++;
+                    throw new Error("gh: Server Error (HTTP 502)");
+                  }
+                  return JSON.stringify(transportJson(args));
+                },
+                sleep: (ms) => waits.push(ms),
+              });
       const settings = {
         cwd,
         directory,
@@ -247,25 +269,35 @@ for (const config of [
         delay: async () => {},
         maxPolls: 2,
       };
-      const firstDispatch = ghRun;
-      await assert.rejects(
-        publishEvidence({
-          ...settings,
-          ghRun: (args) => {
-            firstDispatch(args);
-            if (args[0] === "workflow") throw new Error("response lost after acceptance");
-          },
-        }),
-        /uncertain/,
-      );
-      const retained = readdirSync(spoolRoot);
-      assert.equal(retained.length, 1, "uncertain dispatch retains the original immutable bundle");
       let published;
-      try {
+      if (scenario === "transient-read") {
+        published = await publishEvidence(settings);
+        assert.equal(transientFailures, 1);
+        assert.deepEqual(waits, [250]);
+      } else {
+        const messages = [];
+        await assert.rejects(
+          publishEvidence({
+            ...settings,
+            log: (line) => messages.push(line),
+            ghRun: (args) => {
+              ghRun(args);
+              if (scenario === "uncertain-dispatch" && args[0] === "workflow")
+                throw new Error("response lost after acceptance");
+            },
+          }),
+          scenario === "uncertain-dispatch" ? /uncertain/ : /failed after 3 attempts/,
+        );
+        const retained = readdirSync(spoolRoot);
+        assert.equal(retained.length, 1, "failure retains the original immutable bundle");
+        assert.ok(messages.some((line) => line.includes(`--resume ${retained[0]}`)));
+        if (scenario === "exhausted-read") {
+          assert.equal(dispatches, 0);
+          assert.deepEqual(waits, [250, 500]);
+        }
         published = await publishEvidence({ ...settings, resume: retained[0] });
-      } finally {
-        assert.equal(dispatches, 1, "resume finds the accepted run despite sender clock skew");
       }
+      assert.equal(dispatches, 1, "the complete publication dispatches exactly once");
       assert.equal(transferAsset, null, "verified publication removes its transfer asset");
       assert.equal(published.manifest.sourceSha, sourceSha);
       assert.equal(published.manifest.createdAt, "2026-10-11T11:00:00.000Z");
