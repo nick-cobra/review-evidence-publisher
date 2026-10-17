@@ -32,6 +32,12 @@ npx review-evidence --prune --apply
 
 Select one operation. `--apply` belongs only to retention; resume cannot be mixed with a new source directory/issue. `--prepare <bundle>` and `--cleanup <payload-path>` are runner operations used by the packaged publishing Action. They refuse other workflow/repository/ref/event contexts. Cleanup accepts only one exact, owned, non-symlinked `review-evidence-*` child under `RUNNER_TEMP` ending in `/payload`.
 
+## Transient GitHub reads
+
+Recognised REST metadata GET requests retry timeouts and HTTP 502, 503 and 504 responses within one shared limit of three attempts and 90 seconds. Each command has at most 30 seconds, reduced to the remaining deadline; backoff waits are 250 ms and 500 ms. Callers may lower the attempt limit. Authentication/permission failures, malformed JSON and provenance/hash validation errors are not retried. Mutations and unrecognised commands are never automatically replayed by this helper, including after a timeout.
+
+If reads still fail, the CLI exits with the bundle retained. Use the `--resume <bundle-sha256>` identity printed before dispatch; resumption reconciles the same transfer and existing run. Archive-download timeout retries retain their separate existing limits.
+
 ## Interrupted publication
 
 The local bundle is private under `~/.cache/review-evidence-publisher/<owner>/<repository>/<bundle>/`. Its manifest and selected bytes are validated on recovery. The command prints the bundle identity before attempting dispatch.

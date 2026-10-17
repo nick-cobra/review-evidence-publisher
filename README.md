@@ -8,12 +8,14 @@ Built from [CobraHQ](https://www.cobrahq.app/blog)'s engineering tooling. Useful
 - GitHub.com, with `gh`, `git`, `zip` and `unzip` installed.
 - Zero runtime npm dependencies. No capture-supplied commands are executed.
 
+For execution checkouts without `npm install`, use the [verified runtime distribution](docs/runtime-distribution.md). It provides a pinned archive, per-file manifest and standalone verifier without requiring `node_modules`.
+
 ## Quick start
 
 Install the versioned GitHub package in an existing repository:
 
 ```sh
-npm install --save-dev github:nick-cobra/review-evidence-publisher#v0.1.1
+npm install --save-dev github:nick-cobra/review-evidence-publisher#v0.1.2
 ```
 
 Create `review-evidence.config.json` using your repository's exact name:
@@ -85,4 +87,4 @@ The weekly workflow applies the same checks. Artifacts become eligible 30 days a
 
 Snapshots allow 1–1,000 files, at most 100 MiB per file and 200 MiB total. Supported extensions are PNG/JPEG/WebP/GIF/AVIF, MP4/MOV/WebM, JSON/XML/TXT/LOG/MD/CSV. Every path segment starts with an ASCII letter or number; remaining characters may include letters, numbers, `_`, `-` and `.`. Hidden/unsupported files, symlinks, special files, unsafe ZIP paths and undeclared files or mismatched archive contents are refused.
 
-See [operation and recovery](docs/operation.md), [API/configuration reference](docs/api.md), and [contribution guidance](CONTRIBUTING.md). MIT licensed; [source release](https://github.com/nick-cobra/review-evidence-publisher/releases/tag/v0.1.1).
+See [operation and recovery](docs/operation.md), [API/configuration reference](docs/api.md), and [contribution guidance](CONTRIBUTING.md). MIT licensed; [source release](https://github.com/nick-cobra/review-evidence-publisher/releases/tag/v0.1.2).

@@ -1,5 +1,8 @@
 name: Publish Review Evidence
 description: Validate a transfer bundle and publish an immutable GitHub Actions artifact.
+branding:
+  icon: upload-cloud
+  color: blue
 inputs:
   bundle_id:
     description: SHA-256 identity printed by review-evidence.

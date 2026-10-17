@@ -14,3 +14,5 @@ The runtime has no npm dependencies; YAML is used only by development tests. Tes
 Include a focused regression for behaviour changes. Cover the real publication/verification/CLI boundary, preserve manifest-v1 compatibility, and exercise invalid inputs without substituting an unrelated validation failure. Keep private captures, credentials and production records out of source, issues and test fixtures.
 
 Changing the protocol or trust model needs an explicit compatibility decision. Keep unsuccessful-run deletion separate from successful live proof. Upstream runtime updates should be consumed by exact source commit; release tags are not rewritten.
+
+Release maintainers export the committed runtime with `node bin/runtime.mjs export --output <new-directory>`. Publish its four assets and source/archive/verifier pins with the release, then verify the downloaded archive in a clean no-install consumer. See [runtime distribution](docs/runtime-distribution.md#maintainer-export). The exporter reads Git `HEAD`; commit version/runtime/documentation changes before exporting.
