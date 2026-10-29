@@ -2,7 +2,7 @@
 
 Publish locally collected screenshots, recordings and reports for a specific source commit as immutable GitHub Actions artifacts. Verify the workflow origin, archive digest and every file hash; recover an interrupted handoff with the same bundle identity.
 
-Built from [CobraHQ](https://www.cobrahq.app/blog)'s engineering tooling. Useful when captures are made on a laptop or device host and reviewed on another machine, including coding-agent review workflows.
+Built from [CobraHQ](https://www.cobrahq.app/blog/engineering)'s engineering tooling. Useful when captures are made on a laptop or device host and reviewed on another machine, including coding-agent review workflows.
 
 - Node.js 22+; macOS and Linux. CI covers Node 22/24 on both platforms.
 - GitHub.com, with `gh`, `git`, `zip` and `unzip` installed.
