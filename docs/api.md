@@ -84,21 +84,49 @@ Pass only the staging root returned by this instance to cleanup. Authentication 
 
 ## Methods
 
-| Method                                                                   | Contract                                                                                                               |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `publishEvidence({ directory, issue, cwd?, spoolRoot?, resume?, log? })` | Async clean/pushed snapshot, transfer, dispatch/reconciliation, full verified readback; returns `{artifact, manifest}` |
-| `snapshotEvidence(directory, { sourceSha, issue, createdAt? })`          | Bounded selected regular files; returns `{manifest, bytes: Map}`                                                       |
-| `validateManifest(manifest)`                                             | Validate v1 identity, bounds and bundle hash                                                                           |
-| `readEvidenceArchive(buffer, { sourceSha?, bundleId? }?)`                | Complete bounded ZIP/manifest/file verification; optional caller identity assertions                                   |
-| `verifyArtifactRecord({artifact}, {stageDirectory?}?)`                   | Strict successful publisher provenance and full archive/source verification                                            |
-| `assertAuthenticatedEvidenceStage(stage)`                                | Check unchanged same-instance process-local authentication                                                             |
-| `removeStagedEvidence(root)`                                             | Remove the returned owned staging root, including read-only modes                                                      |
-| `evidenceSpoolRoot()`                                                    | Configured user-cache namespace                                                                                        |
-| `discardSpoolBundle(root, bundleId)`                                     | Retire one ownership-validated local recovery bundle                                                                   |
-| `prepareEvidenceUpload(bundleId, {output})`                              | Validate a transfer into an owned runner output; CLI adds repository/ref/workflow/event checks                         |
-| `pruneEvidenceArtifacts({apply?, now?}?)`                                | Preview/apply reference-aware verified artifact cleanup                                                                |
-| `pruneEvidenceTransfers({apply?, now?}?)`                                | Preview/apply dedicated-container transfer cleanup                                                                     |
+| Method                                                                   | Contract                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `publishEvidence({ directory, issue, cwd?, spoolRoot?, resume?, log? })` | Async clean/pushed snapshot, transfer, dispatch/reconciliation, full verified readback; returns `{artifact, manifest}`    |
+| `snapshotEvidence(directory, { sourceSha, issue, createdAt? })`          | Bounded selected regular files; returns `{manifest, bytes: Map}`                                                          |
+| `validateManifest(manifest)`                                             | Validate v1 identity, bounds and bundle hash                                                                              |
+| `readEvidenceArchive(buffer, { sourceSha?, bundleId? }?)`                | Complete bounded ZIP/manifest/file verification; optional caller identity assertions                                      |
+| `verifyArtifactRecord({artifact}, {stageDirectory?}?)`                   | Strict successful publisher provenance and full archive/source verification                                               |
+| `assertAuthenticatedEvidenceStage(stage)`                                | Check unchanged same-instance process-local authentication                                                                |
+| `removeStagedEvidence(root)`                                             | Remove the returned owned staging root, including read-only modes                                                         |
+| `evidenceSpoolRoot()`                                                    | Configured user-cache namespace                                                                                           |
+| `discardSpoolBundle(root, bundleId)`                                     | Retire one ownership-validated local recovery bundle                                                                      |
+| `prepareEvidenceUpload(bundleId, {output})`                              | Validate a transfer into an owned runner output; CLI adds repository/ref/workflow/event checks                            |
+| `verifyRetentionArtifactRecord(artifact, run, options?)`                 | Verify a completed publisher archive/source; returns `{artifact, manifest, bytes: Map}` without live-stage authentication |
+| `pruneEvidenceArtifacts({apply?, now?, shouldRetain?}?)`                 | Preview/apply reference-aware verified artifact cleanup, with an optional synchronous retention veto                      |
+| `pruneEvidenceTransfers({apply?, now?}?)`                                | Preview/apply dedicated-container transfer cleanup                                                                        |
 
 Advanced compatibility exports include `readSpoolBundle`, `stageEvidenceBundle`, `removeTransferBundle`, `referencedArtifacts`, `retentionCandidates`, `verifyArtifactProvenance`, `verifyRetentionArtifactRecord`, `safeEvidencePath`, `sha256`, `githubJson`, archive timeout/cache helpers and fixed protocol constants. They do not implement Markdown review records, human approval or merge policy.
+
+### Verified retention veto
+
+A trusted caller may pass `shouldRetain({artifact, run, manifest, bytes, now})`
+to `pruneEvidenceArtifacts`. The callback runs only for otherwise eligible
+artefacts, after complete archive, file-hash, publisher and source verification.
+`bytes` contains every verified payload file as a `Map<relativePath, Buffer>`;
+the manifest file itself is separate. Metadata and payload bytes are isolated
+copies, so mutating the callback context cannot change the internal deletion
+target or verified state.
+
+Return literal `true` to retain the artefact, or literal `false` to continue
+through the existing final artefact/run/reference checks. A retained item is
+omitted from the returned deletion list in both dry-run and apply. Omitting
+the option preserves the ordinary 30-day/reference policy. The callback cannot
+make a younger, referenced or unverified artefact eligible for deletion.
+
+A supplied option must be a function. Callback errors propagate; non-boolean
+results, including Promises and thenables, throw synchronously before that
+item's DELETE. Async decisions are not awaited or accepted. Earlier successful
+deletions are not rolled back when a later item fails. Retention verification
+does not stage files or authenticate successful live proof, including when a
+completed unsuccessful publisher run is eligible for ordinary deletion.
+
+The generic CLI and bundled Actions keep their default behaviour. A project
+adapter can supply its policy through the existing publisher injection seam;
+capture data and JSON configuration cannot select executable callbacks.
 
 Trusted transport hooks (`ghJson`, `ghRun`, `download`, `downloadTransfer`) support deterministic tests; publication also accepts `delay`/`maxPolls`. Hooks are caller code, never capture data. Default commands have bounded reads/timeouts. Recognised REST metadata GETs retry timeouts and HTTP 502/503/504 within three attempts and 90 seconds, including 250/500 ms backoff. `githubJson(args, {exec?, attempts?, now?, sleep?})` accepts a lower attempt limit of 1–3 and inert transport/clock hooks for tests. Parsing/validation failures and mutation/unrecognised commands are never retried. Archive downloads retain their existing timeout-only retry policy. See [operation limits](operation.md#transient-github-reads).
