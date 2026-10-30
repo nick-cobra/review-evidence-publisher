@@ -29,6 +29,8 @@ import {
   EVIDENCE_PREFIX,
   EVIDENCE_WORKFLOW,
   clearEvidenceArchiveCache,
+  assertAuthenticatedEvidenceStage,
+  verifyRetentionArtifactRecord,
   verifyArtifactRecord,
 } from "./fixture-publisher.mjs";
 
@@ -364,18 +366,22 @@ for (const [config, scenario] of [
     }
   });
 
-function retentionFixture(t) {
+function retentionFixture(t, files = { "report.txt": "synthetic review report" }) {
   clearEvidenceArchiveCache();
   const root = mkdtempSync(join(tmpdir(), "review-evidence-retention-"));
   t.after(() => {
     clearEvidenceArchiveCache();
     rmSync(root, { recursive: true, force: true });
   });
-  writeFileSync(join(root, "report.txt"), "synthetic review report");
+  for (const [path, bytes] of Object.entries(files)) writeFileSync(join(root, path), bytes);
   const { manifest } = snapshotEvidence(root, { sourceSha: "a".repeat(40), issue: 1 });
   writeFileSync(join(root, "evidence-manifest.json"), JSON.stringify(manifest));
   const zipPath = join(root, "bundle.zip");
-  execFileSync("zip", ["-q", zipPath, "report.txt", "evidence-manifest.json"], { cwd: root });
+  execFileSync(
+    "zip",
+    ["-q", zipPath, ...manifest.files.map((file) => file.path), "evidence-manifest.json"],
+    { cwd: root },
+  );
   const archive = readFileSync(zipPath);
   const artifact = {
     id: 456,
@@ -421,6 +427,272 @@ function retentionFixture(t) {
       apply: true,
     },
   };
+}
+
+for (const apply of [false, true]) {
+  test(`retention veto receives complete verified bytes and retains in apply=${apply}`, (t) => {
+    const files = {
+      "report.txt": "synthetic review report",
+      "details.json": Buffer.from([0, 1, 127, 255]),
+    };
+    const f = retentionFixture(t, files);
+    const contexts = [];
+    assert.deepEqual(
+      pruneEvidenceArtifacts({
+        ...f.settings,
+        apply,
+        shouldRetain: (context) => {
+          contexts.push(context);
+          return true;
+        },
+      }),
+      [],
+    );
+    assert.equal(contexts.length, 1);
+    const context = contexts[0];
+    assert.deepEqual(context.artifact, f.artifact);
+    assert.deepEqual(context.run, f.run);
+    assert.deepEqual(context.manifest, f.manifest);
+    assert.equal(context.now, f.settings.now);
+    assert.ok(context.bytes instanceof Map);
+    assert.deepEqual([...context.bytes.keys()].sort(), Object.keys(files).sort());
+    for (const [path, bytes] of Object.entries(files))
+      assert.deepEqual(context.bytes.get(path), Buffer.from(bytes));
+    assert.deepEqual(f.deleted, []);
+  });
+
+  test(`retention veto false preserves actual deletion results in apply=${apply}`, (t) => {
+    const f = retentionFixture(t);
+    let calls = 0;
+    assert.deepEqual(
+      pruneEvidenceArtifacts({
+        ...f.settings,
+        apply,
+        shouldRetain: () => {
+          calls++;
+          return false;
+        },
+      }),
+      [{ id: 456, applied: apply }],
+    );
+    assert.equal(calls, 1);
+    assert.equal(f.deleted.length, Number(apply));
+  });
+
+  test(`retention veto propagates callback errors before the affected DELETE in apply=${apply}`, (t) => {
+    const f = retentionFixture(t);
+    const failure = new Error("caller retention policy unavailable");
+    assert.throws(
+      () =>
+        pruneEvidenceArtifacts({
+          ...f.settings,
+          apply,
+          shouldRetain: () => {
+            throw failure;
+          },
+        }),
+      (error) => error === failure,
+    );
+    assert.deepEqual(f.deleted, []);
+  });
+}
+
+for (const conclusion of ["success", "failure"]) {
+  test(`retention veto verification exposes bytes without live authentication for ${conclusion}`, (t) => {
+    const f = retentionFixture(t, { "report.txt": "report", "extra.json": "{}" });
+    f.run.conclusion = conclusion;
+    const verified = verifyRetentionArtifactRecord(f.artifact, f.run, f.settings);
+    assert.deepEqual(verified.manifest, f.manifest);
+    assert.ok(verified.bytes instanceof Map);
+    assert.deepEqual([...verified.bytes.keys()].sort(), ["extra.json", "report.txt"]);
+    assert.deepEqual(verified.bytes.get("report.txt"), Buffer.from("report"));
+    assert.deepEqual(verified.bytes.get("extra.json"), Buffer.from("{}"));
+    assert.throws(() => assertAuthenticatedEvidenceStage(verified));
+  });
+}
+
+test("retention veto context mutations cannot change the deletion target or verified bytes", (t) => {
+  const f = retentionFixture(t);
+  let called = false;
+  assert.deepEqual(
+    pruneEvidenceArtifacts({
+      ...f.settings,
+      shouldRetain: (context) => {
+        called = true;
+        context.artifact.id = 999;
+        context.artifact.workflow_run.id = 999;
+        context.run.path = ".github/workflows/foreign.yml";
+        context.run.repository.full_name = "foreign/repo";
+        context.manifest.sourceSha = "f".repeat(40);
+        context.manifest.files.length = 0;
+        context.bytes.get("report.txt").fill(0);
+        context.bytes.clear();
+        return false;
+      },
+    }),
+    [{ id: 456, applied: true }],
+  );
+  assert.equal(called, true);
+  assert.deepEqual(f.deleted, [
+    ["api", "--method", "DELETE", "repos/acme/widget/actions/artifacts/456"],
+  ]);
+  assert.equal(f.artifact.id, 456);
+  assert.equal(f.artifact.workflow_run.id, 123);
+  assert.equal(f.run.repository.full_name, "acme/widget");
+  assert.equal(f.manifest.files.length, 1);
+  const again = verifyRetentionArtifactRecord(f.artifact, f.run, f.settings);
+  assert.deepEqual(again.bytes.get("report.txt"), Buffer.from("synthetic review report"));
+});
+
+for (const value of [null, true, "keep", {}]) {
+  test(`retention veto rejects a non-function option ${JSON.stringify(value)} before API reads`, (t) => {
+    const f = retentionFixture(t);
+    let reads = 0;
+    assert.throws(
+      () =>
+        pruneEvidenceArtifacts({
+          ...f.settings,
+          shouldRetain: value,
+          ghJson: (args) => {
+            reads++;
+            return f.settings.ghJson(args);
+          },
+        }),
+      /shouldRetain.*function/,
+    );
+    assert.equal(reads, 0);
+    assert.deepEqual(f.deleted, []);
+  });
+}
+
+for (const [label, decision] of [
+  ["undefined", () => undefined],
+  ["null", () => null],
+  ["number", () => 1],
+  ["string", () => "true"],
+  ["object", () => ({ retain: true })],
+  ["promise", () => Promise.resolve(true)],
+  ["thenable", () => ({ then: (resolve) => resolve(true) })],
+]) {
+  test(`retention veto rejects a ${label} decision before DELETE`, (t) => {
+    const f = retentionFixture(t);
+    assert.throws(
+      () => pruneEvidenceArtifacts({ ...f.settings, shouldRetain: decision }),
+      /shouldRetain.*synchronous boolean/,
+    );
+    assert.deepEqual(f.deleted, []);
+  });
+}
+
+test("retention veto rejects an accidental rejected async callback without an unhandled rejection", async (t) => {
+  const f = retentionFixture(t);
+  assert.throws(
+    () =>
+      pruneEvidenceArtifacts({
+        ...f.settings,
+        shouldRetain: async () => {
+          throw new Error("async policy failed");
+        },
+      }),
+    /shouldRetain.*synchronous boolean/,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.deleted, []);
+});
+
+test("retention veto does not undo an earlier DELETE when a later policy throws", (t) => {
+  const f = retentionFixture(t);
+  const second = structuredClone(f.artifact);
+  second.id = 457;
+  second.workflow_run.id = 124;
+  const secondRun = { ...structuredClone(f.run), id: 124 };
+  const failure = new Error("second retention decision unavailable");
+  const visited = [];
+  assert.throws(
+    () =>
+      pruneEvidenceArtifacts({
+        ...f.settings,
+        ghJson: (args) => {
+          const endpoint = args.at(-1);
+          if (endpoint.includes("/artifacts?")) return { artifacts: [f.artifact, second] };
+          if (endpoint.endsWith("/artifacts/457")) return second;
+          if (endpoint.endsWith("/runs/124")) return secondRun;
+          return f.settings.ghJson(args);
+        },
+        shouldRetain: ({ artifact }) => {
+          visited.push(artifact.id);
+          if (artifact.id === 456) return false;
+          throw failure;
+        },
+      }),
+    (error) => error === failure,
+  );
+  assert.deepEqual(visited, [456, 457]);
+  assert.deepEqual(f.deleted, [
+    ["api", "--method", "DELETE", "repos/acme/widget/actions/artifacts/456"],
+  ]);
+});
+
+for (const change of ["archive", "source", "provenance"]) {
+  test(`retention veto runs only after real ${change} validation`, (t) => {
+    const f = retentionFixture(t);
+    let calls = 0;
+    if (change === "provenance") f.run.path = ".github/workflows/foreign.yml";
+    const operation = () =>
+      pruneEvidenceArtifacts({
+        ...f.settings,
+        download: () => (change === "archive" ? Buffer.from("tampered archive") : f.archive),
+        ghJson: (args) =>
+          change === "source" && args.at(-1).includes("/git/commits/")
+            ? { sha: "f".repeat(40) }
+            : f.settings.ghJson(args),
+        shouldRetain: () => {
+          calls++;
+          return true;
+        },
+      });
+    if (change === "provenance") assert.deepEqual(operation(), []);
+    else assert.throws(operation, /digest mismatch|source commit identity/);
+    assert.equal(calls, 0);
+    assert.deepEqual(f.deleted, []);
+  });
+}
+
+for (const change of ["artifact", "run", "reference"]) {
+  test(`retention veto false retains the final ${change} guard`, (t) => {
+    const f = retentionFixture(t);
+    let artifactReads = 0;
+    let runReads = 0;
+    let prReads = 0;
+    let calls = 0;
+    const operation = () =>
+      pruneEvidenceArtifacts({
+        ...f.settings,
+        ghJson: (args) => {
+          const endpoint = args.at(-1);
+          if (endpoint.endsWith("/artifacts/456") && ++artifactReads === 2 && change === "artifact")
+            return { ...f.artifact, digest: `sha256:${"f".repeat(64)}` };
+          if (endpoint.endsWith("/runs/123") && ++runReads === 2 && change === "run")
+            return { ...f.run, status: "in_progress" };
+          if (endpoint.includes("/pulls?") && ++prReads === 2 && change === "reference")
+            return [
+              {
+                state: "open",
+                body: "https://github.com/acme/widget/actions/runs/123/artifacts/456",
+              },
+            ];
+          return f.settings.ghJson(args);
+        },
+        shouldRetain: () => {
+          calls++;
+          return false;
+        },
+      });
+    if (change === "reference") assert.deepEqual(operation(), []);
+    else assert.throws(operation, /changed before deletion/);
+    assert.equal(calls, 1);
+    assert.deepEqual(f.deleted, []);
+  });
 }
 
 test("retention removes verified uploads from failed or cancelled completed runs without accepting live proof", (t) => {

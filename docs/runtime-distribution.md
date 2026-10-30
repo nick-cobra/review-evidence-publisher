@@ -7,7 +7,7 @@ of this distribution use Node built-ins only and make no network requests.
 
 Each release supplies:
 
-- `review-evidence-publisher-v0.1.2-runtime.tar`: the fixed runtime inventory,
+- `review-evidence-publisher-v0.1.3-runtime.tar`: the fixed runtime inventory,
   package metadata, README, MIT licence and `runtime-manifest.json`.
 - A `.tar.sha256` file and a `.manifest.json` file for inspection.
 - `verify-runtime.mjs`: a standalone verifier/extractor, identical to
@@ -32,10 +32,10 @@ check its bytes against your independently selected verifier pin:
 ```sh
 printf '%s  verify-runtime.mjs\n' '<pinned-verifier-sha256>' | shasum -a 256 -c -
 node verify-runtime.mjs verify \
-  --archive review-evidence-publisher-v0.1.2-runtime.tar \
+  --archive review-evidence-publisher-v0.1.3-runtime.tar \
   --sha256 '<pinned-archive-sha256>' \
   --source-sha '<pinned-full-source-commit>' \
-  --version 0.1.2 \
+  --version 0.1.3 \
   --output ./vendor/review-evidence-publisher
 ```
 
