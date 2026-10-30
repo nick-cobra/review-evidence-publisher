@@ -544,6 +544,34 @@ test("retention veto context mutations cannot change the deletion target or veri
   assert.deepEqual(again.bytes.get("report.txt"), Buffer.from("synthetic review report"));
 });
 
+test("retention veto isolates the complete backing storage of each payload Buffer", (t) => {
+  const files = { "report.txt": "synthetic review report", "extra.json": "{}" };
+  const f = retentionFixture(t, files);
+  assert.deepEqual(
+    pruneEvidenceArtifacts({
+      ...f.settings,
+      shouldRetain: ({ bytes }) => {
+        const backingStores = new Set();
+        for (const buffer of bytes.values()) {
+          assert.equal(buffer.buffer.byteLength, buffer.byteLength);
+          assert.equal(buffer.byteOffset, 0);
+          assert.equal(backingStores.has(buffer.buffer), false);
+          backingStores.add(buffer.buffer);
+          new Uint8Array(buffer.buffer).fill(0);
+        }
+        return false;
+      },
+    }),
+    [{ id: 456, applied: true }],
+  );
+  assert.deepEqual(f.deleted, [
+    ["api", "--method", "DELETE", "repos/acme/widget/actions/artifacts/456"],
+  ]);
+  const again = verifyRetentionArtifactRecord(f.artifact, f.run, f.settings);
+  for (const [path, content] of Object.entries(files))
+    assert.deepEqual(again.bytes.get(path), Buffer.from(content));
+});
+
 for (const value of [null, true, "keep", {}]) {
   test(`retention veto rejects a non-function option ${JSON.stringify(value)} before API reads`, (t) => {
     const f = retentionFixture(t);
