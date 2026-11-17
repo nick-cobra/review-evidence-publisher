@@ -363,3 +363,126 @@ test("bounded archive entry inventory rejects missing, extra, duplicate and unsa
     );
   }
 });
+
+const ARCHIVE_BUDGET_MS = 30 * 60 * 1000;
+
+test("accepted archives retain the sizing-rate allowance through the full ZIP limit", () => {
+  for (const bytes of [128 * 1024 * 1024, artifacts.MAX_BYTES + 5 * 1024 * 1024]) {
+    assert.equal(
+      artifacts.archiveDownloadTimeout(bytes),
+      Math.ceil((bytes / artifacts.ARCHIVE_TIMEOUT_MIN_BYTES_PER_SECOND) * 1000),
+    );
+    assert.ok(artifacts.archiveDownloadTimeout(bytes) <= ARCHIVE_BUDGET_MS);
+  }
+  assert.equal(artifacts.ARCHIVE_TIMEOUT_CEILING_MS, ARCHIVE_BUDGET_MS);
+});
+
+test("archive retries use the remaining monotonic budget even below the size floor", (t) => {
+  const fixture = evidenceFixture(t);
+  artifacts.clearEvidenceArchiveCache();
+  let clock = 10_000;
+  t.mock.method(performance, "now", () => clock);
+  const timeouts = [];
+  const result = verify(fixture.record, {
+    ghJson: fixture.ghJson,
+    download: (id, { timeoutMs }) => {
+      assert.equal(id, 456);
+      timeouts.push(timeoutMs);
+      if (timeouts.length === 1) {
+        // Model delayed host scheduling, not a throughput claim about this small valid ZIP.
+        clock += ARCHIVE_BUDGET_MS - 1250;
+        throw timeoutFailure();
+      }
+      return fixture.archive;
+    },
+  });
+  assert.equal(result.manifest.issue, 1);
+  assert.deepEqual(timeouts, [artifacts.ARCHIVE_TIMEOUT_FLOOR_MS, 1250]);
+});
+
+test("archive exhaustion starts no further attempt and memoises no failed operation", (t) => {
+  const fixture = evidenceFixture(t);
+  artifacts.clearEvidenceArchiveCache();
+  let clock = 0;
+  t.mock.method(performance, "now", () => clock);
+  let calls = 0;
+  assert.throws(
+    () =>
+      verify(fixture.record, {
+        ghJson: fixture.ghJson,
+        download: () => {
+          calls++;
+          clock += ARCHIVE_BUDGET_MS;
+          throw timeoutFailure();
+        },
+      }),
+    /timed out|deadline/,
+  );
+  assert.equal(calls, 1, "an exhausted operation cannot launch another download");
+  clock += 1;
+  verify(fixture.record, {
+    ghJson: fixture.ghJson,
+    download: () => {
+      calls++;
+      return fixture.archive;
+    },
+  });
+  assert.equal(calls, 2, "a new operation must download, not reuse unverified bytes");
+});
+
+for (const completionTime of [ARCHIVE_BUDGET_MS, ARCHIVE_BUDGET_MS + 1])
+  test("a late complete archive is not accepted, cached or staged at " + completionTime, (t) => {
+    const fixture = evidenceFixture(t);
+    artifacts.clearEvidenceArchiveCache();
+    const stage = mkdtempSync(join(tmpdir(), "evidence-late-stage-"));
+    t.after(() => rmSync(stage, { recursive: true, force: true }));
+    let clock = 0;
+    t.mock.method(performance, "now", () => clock);
+    let calls = 0;
+    assert.throws(
+      () =>
+        artifacts.verifyArtifactRecord(fixture.record, {
+          ghJson: fixture.ghJson,
+          now: Date.parse("2026-10-13T00:00:00Z"),
+          stageDirectory: stage,
+          download: () => {
+            calls++;
+            clock = completionTime;
+            return fixture.archive;
+          },
+        }),
+      /timed out|deadline/,
+    );
+    assert.equal(calls, 1);
+    assert.deepEqual(readdirSync(stage), []);
+    clock += 1;
+    verify(fixture.record, {
+      ghJson: fixture.ghJson,
+      download: () => {
+        calls++;
+        return fixture.archive;
+      },
+    });
+    assert.equal(calls, 2);
+  });
+
+for (const elapsed of [ARCHIVE_BUDGET_MS - 0.5, ARCHIVE_BUDGET_MS])
+  test("no remaining positive-millisecond budget starts no download: " + elapsed, (t) => {
+    const fixture = evidenceFixture(t);
+    artifacts.clearEvidenceArchiveCache();
+    let reads = 0;
+    t.mock.method(performance, "now", () => (reads++ === 0 ? 0 : elapsed));
+    let calls = 0;
+    assert.throws(
+      () =>
+        verify(fixture.record, {
+          ghJson: fixture.ghJson,
+          download: () => {
+            calls++;
+            return fixture.archive;
+          },
+        }),
+      /timed out|deadline/,
+    );
+    assert.equal(calls, 0);
+  });

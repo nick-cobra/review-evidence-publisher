@@ -36,7 +36,32 @@ Select one operation. `--apply` belongs only to retention; resume cannot be mixe
 
 Recognised REST metadata GET requests retry timeouts and HTTP 502, 503 and 504 responses within one shared limit of three attempts and 90 seconds. Each command has at most 30 seconds, reduced to the remaining deadline; backoff waits are 250 ms and 500 ms. Callers may lower the attempt limit. Authentication/permission failures, malformed JSON and provenance/hash validation errors are not retried. Mutations and unrecognised commands are never automatically replayed by this helper, including after a timeout.
 
-If reads still fail, the CLI exits with the bundle retained. Use the `--resume <bundle-sha256>` identity printed before dispatch; resumption reconciles the same transfer and existing run. Archive-download timeout retries retain their separate existing limits.
+If reads still fail, the CLI exits with the bundle retained. Use the `--resume <bundle-sha256>` identity printed before dispatch; resumption reconciles the same transfer and existing run. Archive downloads have the separate shared limit below.
+
+## Archive download budget
+
+Each archive verification operation permits at most three timeout-only download
+attempts within one 30-minute monotonic budget. The initial size allowance is
+`ceil(archive bytes / 128 KiB/s)`, with a 30-second minimum and 30-minute ceiling.
+This gives the full accepted 205 MiB ZIP boundary 1,640 seconds instead of clipping
+it to five minutes. The evidence/ZIP size limits are unchanged.
+
+Every attempt receives the smaller of its size allowance and the remaining
+budget; a retry can receive less than 30 seconds. Exhaustion starts no further
+attempt, and a result arriving at or after the shared deadline is refused before
+verification, caching or staging. Only timeout failures retry. Authentication,
+permission, provenance, digest and manifest refusals do not gain another attempt.
+
+The default transport passes that positive remaining allowance to Node's child
+process timeout. Trusted `download` hooks must honour their `timeoutMs` input;
+they are caller code, not pre-emptible capture data. The budget does not promise
+network availability or completion at arbitrary throughput.
+
+Caller job deadlines must leave room for this archive budget plus metadata reads,
+archive/source verification, publication or model work, and final reporting.
+Each distinct archive operation has its own budget; batch consumers retain their
+own outer deadline and fail-closed admission. A verified cache hit still rechecks
+live metadata, digest and manifest without a second download.
 
 ## Interrupted publication
 
